@@ -9,18 +9,27 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@ai-sdk/azure": "^0.0.31",
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs-node": "^4.20.0",
+    "ai": "^3.3.17",
+    "next": "14.2.6",
+    "ocr-space-api-wrapper": "^2.3.1",
+    "pdf-parse": "^1.1.1",
+    "pdfkit": "^0.15.0",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.6"
+    "sharp": "^0.33.5"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
+    "@types/pdfkit": "^0.13.4",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.6",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
-    "eslint": "^8",
-    "eslint-config-next": "14.2.6"
+    "typescript": "^5"
   }
 }
