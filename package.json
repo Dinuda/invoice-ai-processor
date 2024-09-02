@@ -13,13 +13,19 @@
     "@tensorflow-models/coco-ssd": "^2.2.3",
     "@tensorflow/tfjs-node": "^4.20.0",
     "ai": "^3.3.17",
+    "aws-sdk": "^2.1687.0",
+    "formidable": "^3.5.1",
     "next": "14.2.6",
     "ocr-space-api-wrapper": "^2.3.1",
+    "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.15.0",
+    "raw-body": "^3.0.0",
     "react": "^18",
     "react-dom": "^18",
-    "sharp": "^0.33.5"
+    "react-hook-form": "^7.53.0",
+    "sharp": "^0.33.5",
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
     "@types/node": "^20",
