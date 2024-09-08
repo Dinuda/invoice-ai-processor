@@ -5,56 +5,20 @@ import axios from "axios";
 
 export default function Home() {
   const [file, setFile] = useState(null);
-  const [pdfContent, setPdfContent] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
-  const [editedContent, setEditedContent] = useState("");
+  const [outputPath, setOutputPath] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleFileChange = (event) => {
     setFile(event.target.files[0]);
   };
 
-  const handleUpload = async () => {
+  const handleUploadAndEdit = async () => {
     if (!file) {
       alert("Please select a file first!");
       return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-
-    setIsLoading(true);
-    try {
-      const uploadResponse = await axios.post("/api/upload", formData);
-      const { filename } = uploadResponse.data;
-      await handleExtract(filename);
-    } catch (error) {
-      console.error("Error:", error);
-      alert("An error occurred while uploading the file.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleExtract = async (filename) => {
-    console.log("Extracting content from:", filename);
-
-    try {
-      const extractResponse = await axios.post("/api/extract", { filename });
-      console.log("Extracted content:", extractResponse.data.text);
-
-      setPdfContent(extractResponse.data.text);
-    } catch (error) {
-      console.error("Error:", error);
-      alert("An error occurred while extracting the PDF content.");
-    }
-  };
-
-  const handleEdit = async () => {
-    if (!pdfContent) {
-      alert("Please upload a PDF first!");
-      return;
-    }
     if (!editPrompt) {
       alert("Please enter an edit prompt!");
       return;
@@ -62,14 +26,21 @@ export default function Home() {
 
     setIsLoading(true);
     try {
-      const editResponse = await axios.post("/api/edit", {
-        content: pdfContent,
+      // Upload file
+      const formData = new FormData();
+      formData.append("file", file);
+      const uploadResponse = await axios.post("/api/upload", formData);
+      const { file_path } = uploadResponse.data;
+
+      // Extract and edit
+      const extractResponse = await axios.post("/api/extract", {
+        file_path: file_path,
         prompt: editPrompt,
       });
-      setEditedContent(editResponse.data.editedContent);
+      setOutputPath(extractResponse.data.output_path);
     } catch (error) {
       console.error("Error:", error);
-      alert("An error occurred while editing the content.");
+      alert("An error occurred while processing the PDF.");
     } finally {
       setIsLoading(false);
     }
@@ -84,19 +55,6 @@ export default function Home() {
         accept=".pdf"
         className="mb-4"
       />
-      <button
-        onClick={handleUpload}
-        disabled={isLoading}
-        className="bg-blue-500 text-white px-4 py-2 rounded disabled:bg-gray-400 mb-4"
-      >
-        {isLoading ? "Processing..." : "Upload and Extract"}
-      </button>
-      {pdfContent && (
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold">Original Content:</h2>
-          <p className="whitespace-pre-wrap">{pdfContent}</p>
-        </div>
-      )}
       <div className="mb-4">
         <input
           type="text"
@@ -105,18 +63,22 @@ export default function Home() {
           placeholder="Enter edit prompt"
           className="w-full p-2 border rounded"
         />
-        <button
-          onClick={handleEdit}
-          disabled={isLoading || !pdfContent}
-          className="mt-2 bg-green-500 text-white px-4 py-2 rounded disabled:bg-gray-400"
-        >
-          {isLoading ? "Editing..." : "Edit with AI"}
-        </button>
       </div>
-      {editedContent && (
+      <button
+        onClick={handleUploadAndEdit}
+        disabled={isLoading}
+        className="bg-blue-500 text-white px-4 py-2 rounded disabled:bg-gray-400 mb-4"
+      >
+        {isLoading ? "Processing..." : "Upload and Edit PDF"}
+      </button>
+      {outputPath && (
         <div>
-          <h2 className="text-xl font-semibold">Edited Content:</h2>
-          <p className="whitespace-pre-wrap">{editedContent}</p>
+          <h2 className="text-xl font-semibold">Edited PDF:</h2>
+          <p>Your edited PDF is available at: {outputPath}</p>
+          <p>
+            You can download it from the server or implement a download link
+            here.
+          </p>
         </div>
       )}
     </div>

@@ -1,21 +1,123 @@
 import sys
-# app.py
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 import os
+import torch
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
+from pdf2image import convert_from_path
+from PIL import Image
+from PyPDF2 import PdfReader, PdfWriter
+from openai import AzureOpenAI
+import tempfile
 import fitz  # PyMuPDF
-from transformers import pipeline
 
 app = Flask(__name__)
+client = AzureOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),  
+    api_version="2023-05-15",
+    azure_endpoint=os.getenv("OPENAI_AZURE_ENDPOINT")
+)
 
+model_name = "makers_gpt4o"
 
-# Configure upload folder
-UPLOAD_FOLDER = 'uploads'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+def extract_structure_from_pdf(pdf_path):
+    structure = []
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            page_structure = []
+            blocks = page.get_text("dict")["blocks"]
+            for b in blocks:
+                if b["type"] == 0:  # Text
+                    for line in b["lines"]:
+                        for span in line["spans"]:
+                            page_structure.append({
+                                "text": span["text"],
+                                "bbox": span["bbox"],
+                                "font": span["font"],
+                                "size": span["size"],
+                                "color": span["color"]
+                            })
+                elif b["type"] == 1:  # Image
+                    page_structure.append({
+                        "type": "image",
+                        "bbox": b["bbox"]
+                    })
+            structure.append(page_structure)
+    return structure
 
-# Initialize AI model
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+def process_text_with_ai(text, prompt):
+    response = client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that edits and improves text while preserving the original structure and format."},
+            {"role": "user", "content": f"Please edit and improve the following text, focusing on filling in missing parts and adding necessary information. Preserve the original structure, format, and any existing content as much as possible:\n\n{text}\n\nChanges to make:\n{prompt}"},
+        ]
+    )
+    return response.choices[0].message.content
 
+def merge_edited_text_with_structure(structure, edited_text):
+    edited_words = edited_text.split()
+    word_index = 0
+    
+    for page in structure:
+        for item in page:
+            if item.get("type") == "image":
+                continue
+            
+            if word_index < len(edited_words):
+                # Check if the original text is a header, footer, or part of a table
+                if item["size"] > 12 or item["color"] != (0, 0, 0):  # Assuming headers/footers have larger font or different color
+                    continue  # Preserve original text
+                
+                # Check if it's part of a table (simplified check, may need improvement)
+                if re.match(r'^\s*[\d.,]+\s*$', item["text"]):
+                    continue  # Preserve original text if it looks like table data
+                
+                item["text"] = edited_words[word_index]
+                word_index += 1
+    
+    return structure
+
+def edit_pdf_content(input_pdf_path, output_pdf_path, structure):
+    doc = fitz.open(input_pdf_path)
+    for page_num, page in enumerate(doc):
+        for item in structure[page_num]:
+            if item.get("type") == "image":
+                continue
+            page.clean_contents(False)
+            try:
+                page.insert_text(
+                    (item["bbox"][0], item["bbox"][1]),
+                    item["text"],
+                    fontname=item["font"],
+                    fontsize=item["size"],
+                    fontfile=None,
+                    color=item["color"]
+                )
+            except Exception as e:
+                print(f"Error inserting text: {e}")
+                # Fallback to a basic insert_text call
+                page.insert_text((item["bbox"][0], item["bbox"][1]), item["text"], fontsize=12, fontname="helv", fontfile=None, color=(0, 0, 0))
+    
+    doc.save(output_pdf_path)
+    doc.close()
+
+def edit_pdf(input_pdf_path, output_pdf_path, prompt):
+    # Extract structure from PDF
+    structure = extract_structure_from_pdf(input_pdf_path)
+    
+    # Extract original text
+    original_text = " ".join([item["text"] for page in structure for item in page if "text" in item])
+    
+    # Process text with OpenAI
+    edited_text = process_text_with_ai(original_text, prompt)
+    
+    # Merge edited text with original structure
+    updated_structure = merge_edited_text_with_structure(structure, edited_text)
+    
+    # Edit PDF content while preserving structure
+    edit_pdf_content(input_pdf_path, output_pdf_path, updated_structure)
+    
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -23,103 +125,25 @@ def upload_file():
     file = request.files['file']
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
-    if file and file.filename.endswith('.pdf'):
+    if file:
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        return jsonify({"message": "File uploaded successfully", "filename": filename}), 200
-    return jsonify({"error": "Invalid file type"}), 400
+        file_path = os.path.join(tempfile.gettempdir(), filename)
+        file.save(file_path)
+        return jsonify({"message": "File uploaded successfully", "file_path": file_path}), 200
 
-@app.route('/api/process', methods=['POST'])
-def process_pdf():
-    filename = request.json.get('filename')
-    if not filename:
-        return jsonify({"error": "No filename provided"}), 400
+@app.route('/api/extract', methods=['POST'])
+def extract_invoice():
+    data = request.get_json()
+    if not data or 'file_path' not in data or 'prompt' not in data:
+        return jsonify({"error": "No file path or prompt provided"}), 400
     
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    if not os.path.exists(filepath):
-        return jsonify({"error": "File not found"}), 404
-
-    # Extract text from PDF
-    doc = fitz.open(filepath)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-
-    # Process text with AI
-    summary = summarizer(text, max_length=150, min_length=30, do_sample=False)[0]['summary_text']
-
-    return jsonify({"summary": summary}), 200
+    input_pdf = data['file_path']
+    output_pdf = os.path.join(tempfile.gettempdir(), "edited_invoice.pdf")
+    prompt = data['prompt']
+    
+    edit_pdf(input_pdf, output_pdf, prompt)
+    
+    return jsonify({"message": "Invoice edited successfully", "output_path": output_pdf}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
-    
-
-@app.route('/api/edit', methods=['POST'])
-def edit_content():
-    data = request.get_json()
-    
-    # Ensure filename and prompt are provided in the JSON body
-    if not data or 'content' not in data or 'prompt' not in data:
-        return jsonify({"error": "No content or prompt provided"}), 400
-    
-    content = data['content']
-    prompt = data['prompt']
-    
-    # Initialize AI model
-    editor = pipeline("text2text-generation", model="facebook/bart-large-cnn")
-
-    # Prepare the input for the model
-    input_text = f"Edit the following text based on this instruction: {prompt}\n\nText: {content}"
-
-    # Generate edited content
-    edited = editor(input_text, max_length=1024, min_length=30, do_sample=True)[0]['generated_text']
-
-    print(edited)
-    
-    return jsonify({"edited": edited}), 200
-    
-@app.route('/api/extract', methods=['POST'])
-def extract_pdf():
-    data = request.get_json()
-
-    # Ensure filename is provided in the JSON body
-    if not data or 'filename' not in data:
-        return jsonify({"error": "No filename provided"}), 400
-
-    filename = data['filename']
-    file_path = os.path.join("uploads", filename)
-
-    # Check if the file exists
-    if not os.path.exists(file_path):
-        return jsonify({"error": "File not found"}), 404
-
-    try:
-        # Open the file using PyMuPDF
-        doc = fitz.open(file_path)
-        text = ""
-        for page in doc:
-            text += page.get_text()
-
-        # Return the extracted text as a JSON response
-        return jsonify({"text": text}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python extract_pdf.py <filename>")
-        sys.exit(1)
-    
-    filename = sys.argv[1]
-    extract_pdf(filename)
-
-
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python edit_content.py <filename> <prompt>")
-        sys.exit(1)
-    
-    filename = sys.argv[1]
-    prompt = sys.argv[2]
-    edit_content(filename, prompt)

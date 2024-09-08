@@ -5,3 +5,4 @@ PyMuPDF
 transformers
 torch
 fastapi
+dotenv
